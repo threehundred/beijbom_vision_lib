@@ -1,13 +1,14 @@
-import glob, os, Image, math, colorsys, scipy, confmatrix, beijbom_pytools, caffe, re, lmdb, sys
+import glob, os, Image, math, colorsys, scipy, confmatrix, caffe, re, lmdb, sys
 import numpy as np
 import matplotlib.pyplot as plt
+import beijbom_misc_tools as bmt
 from pylab import *
 from copy import deepcopy, copy
 import cPickle as pickle
 from tqdm import tqdm
 
 """
-beijbom caffe tools (bct) contains a ton of classes and wrappers for caffe.
+beijbom_caffe_tools (bct) contains classes and wrappers for caffe.
 """
 
 
@@ -63,6 +64,7 @@ class Transformer:
 class CaffeSolver:
     """
     Caffesolver is a class for creating a solver.prototxt file. It sets default values and can export a solver parameter file.
+    Note that all parameters are stored as strings. For technical reasons, the strings are stored as strings within strings.
     """
 
     def __init__(self, net_prototxt_path = "net.prototxt", debug = False):
@@ -71,7 +73,7 @@ class CaffeSolver:
 
         # critical:
         self.sp['base_lr'] = '1e-10'
-        self.sp['momentum'] = '0.99'
+        self.sp['momentum'] = '0.9'
         
         # speed:
         self.sp['test_iter'] = '100'
@@ -80,7 +82,7 @@ class CaffeSolver:
         # looks:
         self.sp['display'] = '25'
         self.sp['snapshot'] = '2500'
-        self.sp['snapshot_prefix'] = '"snapshot"'
+        self.sp['snapshot_prefix'] = '"snapshot"' # string withing a string!
         
         # learning rate policy
         self.sp['lr_policy'] = '"step"'
@@ -125,54 +127,7 @@ class CaffeSolver:
         return 1
 
 
-def classify_list(im_list, net, transformer, batch_size, get_scores = False):
-    nbatches = int(math.ceil(float(len(im_list)) / batch_size))
-    pos = -1
-    gt = []
-    for b in range(nbatches):
-        for i in range(batch_size):
-            pos += 1
-            if pos < len(im_list):
-                net.blobs['data'].data[i, :, :, :] = transformer.preprocess(im_list[pos])
-        net.forward(start = 'conv1_1')
-        for i in range(batch_size):
-            if get_scores:
-                gt.append(net.blobs['fc8_mcr'].data[i,:].flatten())
-            else:
-                gt.append(np.argmax(net.blobs['fc8_mcr'].data[i,:].flatten()))
 
-    return(gt[:len(im_list)])
-
-
-def sac(im, net, transformer, target_size = [1024, 1024], padcolor = [126, 148, 137], get_scores = False):
-    """
-    sac (slice and classify) will slice the input image, feed each piece to the
-    caffe net object, and then stitch the output back together to an output ground 
-    truth image
-    """
-    input_size = im.shape[:2]
-    (imlist, ncells) = beijbom_pytools.slice_image(im, target_size = target_size, padcolor = padcolor)
-    imcounter = -1
-    for row in range(ncells[0]):
-        for col in range(ncells[1]):
-            imcounter += 1
-            net.blobs['data'].data[...] = transformer.preprocess(imlist[imcounter])
-            net.forward(start = 'conv1_1')
-            if get_scores:
-                slice_gt = np.float32(np.squeeze(net.blobs['upscore'].data.transpose(2, 3, 1, 0)))
-            else:    
-                slice_gt = np.uint8(np.argmax(np.squeeze(net.blobs['upscore'].data.transpose(2, 3, 1, 0)), axis = 2))
-            
-            if col == 0:
-                rowgt = deepcopy(slice_gt)
-            else:
-                rowgt = np.concatenate((rowgt, slice_gt), axis = 1) #build one row (along the columns)
-
-        if row == 0:
-            outgt = rowgt
-        else:
-            outgt = np.concatenate((outgt, rowgt), axis = 0) # concatenate the rows
-    return outgt
 
 
 def run(workdir = None, weights = 'weights.caffemodel', solver = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = '/home/beijbom/cc/build/tools/caffe', restart = False):
@@ -255,55 +210,62 @@ def cycle_runs(run_params, test_params, cycle_sizes, ncycles):
                 classify(**tparams)
 
 
-def load_model(rundir, snapshot):
-    os.chdir(rundir)
-    caffe.set_device(0)
+def load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = 'net.prototxt'):
+    """
+    changes current directory to INPUT workdir and loads INPUT net_prototxt.
+    """
+    os.chdir(workdir)
+    caffe.set_device(GPU_id)
     caffe.set_mode_gpu()
-    net = caffe.Net('net.prototxt', snapshot, caffe.TEST)
-    net.forward() 
-    return 4
+    net = caffe.Net(net_prototxt, caffemodel, caffe.TEST)
+    net.forward() #one forward to initialize the net
+    return net
 
 
 def nbr_lines(fname):
+    """
+    Opens INPUT file fname and returns the number of lines in the file.
+    """
     with open(fname) as f:
         for i, l in enumerate(f):
             pass
     return i + 1
 
-def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = 255, n_testinstances = None):
+def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = np.inf, n_testinstances = None, batch_size = None):
     """
-    classify will run a trained net on a testset and return the ground truth, estimated labels and the score vectors.
+    classify runs a trained net on a testset defined in a net.prototxt file and returns the ground truth, estimated labels and the score vectors.
 
     Takes
-    workdir: directory where net_prototxt lives. All paths must be given relative to this directory
+    workdir: directory where net_prototxt lives. All paths must be given relative to this directory.
     scorelayer: name of layer to extract the scores from
-    caffemodel: name of the stored caffemodel. If not given, the most recent model in workdir will be used.
-    snapshot_prefix: snapshot prefix used by caffe. This is only required if caffemodel = None.
+    caffemodel: name of the stored caffemodel. If not given, the most recent snapshot in workdir will be used.
+    snapshot_prefix: snapshot prefix. Only used if caffemodel = None.
     net_prorotxt: name of the net prototxt to use. 
-    save: wheather or not to save the output to disk or not.
-    ignore_label: Ignores all labels where the gt = ignore_label. Used mostly for FCN models. 
-    n_testinstances: Number of instances in the test list. If not given, this will be extracted automatically from the testlist or LMDB. Note that there is no support for 
+    save: wheather to save the output to disk.
+    ignore_label: Ignores all labels where the gt = ignore_label. Relevant only for FCN models. 
+    n_testinstances: Number of instances in the test list. If not given, this will be extracted automatically from the testlist or LMDB. 
 
     Gives
     (gt, est, scores): tuple with ground truth (as list), estimated labels (as list), scores as list of np arrays
 
     """
 
-    os.chdir(workdir)
-    if caffemodel is None:
-        ## find and load latest model:
+    os.chdir(workdir) #move to workdir
+    
+    # find and load latest model
+    if caffemodel is None: #
         caffemodels = glob.glob("{}*.caffemodel".format(snapshot_prefix))
         if caffemodels:
             _iter = [int(f[f.index('iter_')+5:f.index('.')]) for f in caffemodels]
             caffemodel = caffemodels[np.argmax(_iter)]
         else:
-            print "Can't find a trained model in " + workdir + "."
-            return None
+            raise IOError("Can't find a trained model in " + workdir + " using prefix: " + snapshot_prefix + ".")
 
     # find batch size from prototxt
-    with open (net_prototxt, "r") as myfile:
-        net_definition_str = myfile.read()
-    batch_size = int(re.findall('(?<=batch_size: )[0-9]*', net_definition_str)[-1])
+    if batch_size is None:
+        with open (net_prototxt, "r") as myfile:
+            net_definition_str = myfile.read()
+        batch_size = int(re.findall('(?<=batch_size: )[0-9]*', net_definition_str)[-1]) #the batch size for the test set is assumed to be defined last. TODO: make this more robust!
 
     # find the number of instances in test set:
     test_file = os.path.join('./../', re.findall("(?<=source: ../../)[a-z0-9]*.[a-z]*", net_definition_str)[-1])
@@ -311,19 +273,18 @@ def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot
         if test_file.find('lmdb') > -1:
             in_db = lmdb.open(test_file)
             n_testinstances = int(in_db.stat()['entries'])
-        else: 
+        elif test_file.find('txt') > -1:: 
             n_testinstances = nbr_lines(test_file)
+        else:
+            raise NotImplementedError("Only supports image_data_layers defined in XXXtxt files and LMDB inputs defined in XXXlmdb.")
 
     print "Classifying " + test_file + " from "+ os.path.join(workdir, net_prototxt) + " using " + caffemodel + " with bs:" + str(batch_size) + ", and " + str(n_testinstances) + " total instances."
     sys.stdout.flush()
 
-    # setup caffe and load model
-    caffe.set_device(0)
-    caffe.set_mode_gpu()
-    net = caffe.Net(net_prototxt, caffemodel, caffe.TEST)
-    net.forward() #call once for allocation
+    # Load model
+    net = load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = net_prototxt):
 
-    # classify. All the reshaping has to do with being able to handling both FCN and classification nets.
+    # Classify. All the reshaping has to do with being able to handling both FCN and classification nets.
     gtlist = []
     scorelist = []
     for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
@@ -338,14 +299,84 @@ def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot
         gtlist.extend(list(np.reshape(gt, [gt.shape[0]/nclasses, nclasses])[:, 0]))
         net.forward()
 
-    #If the net is not a FCN we need to cut of the lists (sicne the last iteration may be looping around)
+    # If the net is not a FCN we need to cut of the lists (since the last iteration may be looping around)
     if net.blobs[scorelayer].data.shape[2] == 1: 
         gtlist = gtlist[:n_testinstances]
         scorelist = scorelist[:n_testinstances]
 
-    # for convenience, include estimated labels
+    # For convenience, include estimated labels
     estlist = [np.argmax(s) for s in scorelist]
     if (save):
         pickle.dump((gtlist, estlist, scorelist), open(os.path.join(workdir, 'predictions_on_' + test_file[5:] + '_using_' + caffemodel +  '.p'), 'wb'))
 
     return (gtlist, estlist, scorelist)
+
+
+
+
+def classify_imlist(im_list, net, transformer, batch_size, score_layer, start_layer = 'conv1_1'):
+    """
+    classify_imlist classifies a list of images and returns estimated labels and scores. Only support classification nets (not FCNs).
+
+    Takes
+    im_list: list of images to classify (each stored as a numpy array).
+    net: caffe net object
+    transformer: transformer object as defined above.
+    batch_size: batch size for the net.
+    score_layer: name of the score layer.
+    start_layer: name of first convolutional layer.
+    """
+
+    nbatches = int(math.ceil(float(len(im_list)) / batch_size))
+    scorelist = []
+    for b in range(nbatches):
+        for i in range(batch_size):
+            net.blobs['data'].data[i, :, :, :] = transformer.preprocess(im_list[pos])
+        net.forward(start = start_layer)
+        for i in range(batch_size):
+            scorelist.append(net.blobs[score_layer].data[i,:].flatten())
+    scorelist = scorelist[:len(im_list)]
+    estlist = [np.argmax(s) for s in scorelist]  
+    
+    return(estlist, scorelist)
+
+
+def sac(im, net, transformer, score_layer, target_size = [1024, 1024], padcolor = [126, 148, 137], start_layer = 'conv1_1'):
+    """
+    sac (slice and classify) slices the input image, feed each piece to the
+    caffe net object, and then stitch the output back together to an output image
+
+    Takes
+    im: input numpy array.
+    net: Caffe net object.
+    transformer: transformer object as defined above.
+    score_layer: string defining the name of the score layer.
+    target_size: size of each slice.
+    padcolor: the RGB values used when padding the image.
+    start_layer: string defining the name of first convolutional layer.
+
+    Gives
+    (est, scores) tuple, where est is an integer image of the same size as the input, and scores is a multi-layer image encoding the score of each class in each layer.
+
+    """
+
+    input_size = im.shape[:2]
+    (imlist, ncells) = bmt.slice_image(im, target_size = target_size, padcolor = padcolor)
+    imcounter = -1
+    for row in range(ncells[0]):
+        for col in range(ncells[1]):
+            imcounter += 1
+            net.blobs['data'].data[...] = transformer.preprocess(imlist[imcounter])
+            net.forward(start = start_layer)
+            scores_slice = np.float32(np.squeeze(net.blobs[score_layer].data.transpose(2, 3, 1, 0)))
+            if col == 0:
+                scores_row = deepcopy(scores_slice)
+            else:
+                scores_row = np.concatenate((scores_row, scores_slice), axis = 1) # Build one row (along the columns)
+        if row == 0:
+            scores = scores_row
+        else:
+            scores = np.concatenate((scores, scores_row), axis = 0) # Concatenate the rows
+    scores = scores[:input_size[0], :input_size[1], :] # Crop away the padding.
+    est = np.argmax(scores, axis = 2) # For convenience, get the predictions.
+    return (est, scores)
