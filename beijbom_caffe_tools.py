@@ -264,7 +264,7 @@ def cycle_runs(run_params, test_params, cycle_sizes, ncycles):
 
 	test_params: is a list of dictionaries. List must be same length as run_params.
 	Each directory is passed on to the "classify" method above. Each dictionary must contain values for the 
-	['workdir'] and ['scorelayer'] parameter.
+	['scorelayer'] parameter.
 
 	cycle_sizes: array of ints of the same length as run_params. 
 	Cycle_sizes determines the nbr iterations for each experiment in run_params list.
