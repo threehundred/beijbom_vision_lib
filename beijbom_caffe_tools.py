@@ -154,20 +154,20 @@ def run(workdir = None, caffemodel = 'weights.caffemodel', solver = 'solver.prot
 	
 	# by default, start from the most recent snapshot
 	if snapshots and not(restart): 
-		print "Running from iter {}.".format(np.max(_iter))
+		print("Running from iter {}.".format(np.max(_iter)))
 		runstring  = 'cd {}; {} train -solver {} -snapshot {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, latest_snapshot, log)
 
 	# else, start from a pre-trained net defined in caffemodel
 	elif(caffemodel): 
 		if(os.path.isfile(os.path.join(workdir, caffemodel))):
-			print "Fine tuning from {}.".format(os.path.join(workdir, caffemodel))
+			print("Fine tuning from {}.".format(os.path.join(workdir, caffemodel)))
 			runstring  = 'cd {}; {} train -solver {} -weights {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, caffemodel, log)
 		else:
 			raise IOError("Can't fine intial weight file: " + os.path.join(workdir, caffemodel))
 
 	# Train from scratch. Not recommended for larger nets.
 	else: 
-		print "No caffemodel specified. Running from scratch!!"
+		print("No caffemodel specified. Running from scratch!!")
 		runstring  = 'cd {}; {} train -solver {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, log)
 	os.system(runstring)
 
@@ -218,7 +218,7 @@ def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot
 		else:
 			raise NotImplementedError("Only supports image_data_layers defined in XXXtxt files and LMDB inputs defined in XXXlmdb.")
 
-	print "Classifying " + test_file + " from "+ os.path.join(workdir, net_prototxt) + " using " + caffemodel + " with bs:" + str(batch_size) + ", and " + str(n_testinstances) + " total instances."
+	print("Classifying " + test_file + " from "+ os.path.join(workdir, net_prototxt) + " using " + caffemodel + " with bs:" + str(batch_size) + ", and " + str(n_testinstances) + " total instances.")
 	sys.stdout.flush()
 
 	# Load model
@@ -296,7 +296,7 @@ def cycle_runs(run_params, test_params, cycle_sizes, ncycles):
 			solver.sp['max_iter'] = str(max_iter)
 			solver.sp['snapshot'] = str(1000000) #disable this, don't need it.
 			solver.write(os.path.join(params['workdir'], params['solver']))
-			print "Running {} from {} to {} itts.".format(params['workdir'], max_iter-cycle_size+1, max_iter+1)
+			print("Running {} from {} to {} itts.".format(params['workdir'], max_iter-cycle_size+1, max_iter+1))
 			run(**params)
 
 			# classify all *net.prototxt in workdir
@@ -317,12 +317,12 @@ def cycle_runs_debug(run_params, test_params):
 	"""
 	run_params = deepcopy(run_params)
 	test_params = deepcopy(test_params)
-	print 'Running tests...'
+	print('Running tests...')
 	for test_param in test_params:
 		test_param['n_testinstances'] = 5
 	cycle_sizes = np.ones(len(test_params), dtype = np.int) * 4 #4 iterations
 	cycle_runs(run_params, test_params, cycle_sizes, 1)
-	print 'Run test OK. Cleaning up.'
+	print('Run test OK. Cleaning up.')
 	for run_param in run_params:
 		for file_ in glob.glob(os.path.join(run_param['workdir'], 'snapshot*')):
 			os.remove(file_)
