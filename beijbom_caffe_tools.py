@@ -1,4 +1,5 @@
-import glob, os, Image, math, colorsys, scipy, caffe, re, lmdb, sys
+import glob, os, math, colorsys, scipy, caffe, re, sys
+from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 import beijbom_misc_tools as bmt
@@ -53,11 +54,12 @@ class Transformer:
 		inverse of preprocess()
 		"""
 		im = im.transpose(1, 2, 0)
-		im = im / self.scale
+		im /= self.scale
 
 		for channel, channel_mean in list(enumerate(self.mean)):
 			im[:, :, channel] = im[:, :, channel] + np.ones(im.shape[:2], dtype=np.uint8) * channel_mean
-	
+		
+		im = im[:,:,::-1]
 		return np.uint8(im)
 
 
@@ -131,7 +133,7 @@ class CaffeSolver:
 
 
 
-def run(workdir = None, caffemodel = 'weights.caffemodel', solver = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = '/home/beijbom/cc/build/tools/caffe', restart = False):
+def run(workdir = None, caffemodel = 'weights.caffemodel', GPU_id = 0,solver = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = '/home/beijbom/cc/build/tools/caffe', restart = False):
 	"""
 	run is a simple caffe wrapper for training nets. It basically does two things. (1) ensures that training continues from the most recent model, and (2) makes sure the output is captured in a log file.
 
@@ -155,23 +157,23 @@ def run(workdir = None, caffemodel = 'weights.caffemodel', solver = 'solver.prot
 	# by default, start from the most recent snapshot
 	if snapshots and not(restart): 
 		print("Running from iter {}.".format(np.max(_iter)))
-		runstring  = 'cd {}; {} train -solver {} -snapshot {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, latest_snapshot, log)
+		runstring  = 'cd {}; {} train -solver {} -snapshot {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, latest_snapshot, GPU_id, log)
 
 	# else, start from a pre-trained net defined in caffemodel
 	elif(caffemodel): 
 		if(os.path.isfile(os.path.join(workdir, caffemodel))):
 			print("Fine tuning from {}.".format(os.path.join(workdir, caffemodel)))
-			runstring  = 'cd {}; {} train -solver {} -weights {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, caffemodel, log)
+			runstring  = 'cd {}; {} train -solver {} -weights {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, caffemodel, GPU_id, log)
 		else:
 			raise IOError("Can't fine intial weight file: " + os.path.join(workdir, caffemodel))
 
 	# Train from scratch. Not recommended for larger nets.
 	else: 
 		print("No caffemodel specified. Running from scratch!!")
-		runstring  = 'cd {}; {} train -solver {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, log)
+		runstring  = 'cd {}; {} train -solver {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solver, GPU_id, log)
 	os.system(runstring)
 
-def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = np.inf, n_testinstances = None, batch_size = None):
+def classify(workdir, scorelayer, caffemodel = None, GPU_id = 0, snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = np.inf, n_testinstances = None, batch_size = None):
 	"""
 	classify runs a trained net on a testset defined in a net.prototxt file and returns the ground truth, estimated labels and the score vectors.
 
@@ -222,25 +224,29 @@ def classify(workdir, scorelayer, caffemodel = None, snapshot_prefix = 'snapshot
 	sys.stdout.flush()
 
 	# Load model
-	net = load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = net_prototxt)
+	net = load_model(workdir, caffemodel, GPU_id = GPU_id, net_prototxt = net_prototxt)
 
 	# Classify. All the reshaping has to do with being able to handling both FCN and classification nets.
 	gtlist = []
 	scorelist = []
 	for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
-		gt = copy(net.blobs['label'].data.transpose(0, 2, 3, 1)).astype(np.uint8)
-		scores = copy(net.blobs[scorelayer].data.transpose(0, 2, 3, 1)).astype(np.float)
-		nclasses = scores.shape[3]
-		gt = np.repeat(gt, nclasses, axis = 3)
-		keepind = gt != ignore_label
-		scores = scores[keepind]
-		scorelist.extend(list(np.reshape(scores, [scores.shape[0]/nclasses, nclasses])))
-		gt = gt[keepind]
-		gtlist.extend(list(np.reshape(gt, [gt.shape[0]/nclasses, nclasses])[:, 0]))
+		if net.blobs['label'].data.ndim == 1:
+			gtlist.extend(list(copy(net.blobs['label'].data).astype(np.uint8)))
+			scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
+		else:
+			gt = copy(net.blobs['label'].data.transpose(0, 2, 3, 1)).astype(np.uint8)
+			scores = copy(net.blobs[scorelayer].data.transpose(0, 2, 3, 1)).astype(np.float)
+			nclasses = scores.shape[3]
+			gt = np.repeat(gt, nclasses, axis = 3)
+			keepind = gt != ignore_label
+			scores = scores[keepind]
+			scorelist.extend(list(np.reshape(scores, [scores.shape[0]/nclasses, nclasses])))
+			gt = gt[keepind]
+			gtlist.extend(list(np.reshape(gt, [gt.shape[0]/nclasses, nclasses])[:, 0]))
 		net.forward()
 
 	# If the net is not a FCN we need to cut of the lists (since the last iteration may be looping around)
-	if net.blobs[scorelayer].data.shape[2] == 1: 
+	if net.blobs['label'].data.ndim == 1: 
 		gtlist = gtlist[:n_testinstances]
 		scorelist = scorelist[:n_testinstances]
 
@@ -275,8 +281,8 @@ def cycle_runs(run_params, test_params, cycle_sizes, ncycles):
 
 
 	"""
-	run_defaults = {'solver':'solver.prototxt','log':'train.log','snapshot_prefix':'snapshot','caffepath':'/home/beijbom/cc/build/tools/caffe', 'restart': False}
-	test_defaults = {'caffemodel':None, 'snapshot_prefix':'snapshot', 'save':True, 'ignore_label':255, 'n_testinstances':None}
+	run_defaults = {'solver':'solver.prototxt', 'GPU_id':0, 'log':'train.log','snapshot_prefix':'snapshot','caffepath':'/home/beijbom/cc/build/tools/caffe', 'restart': False}
+	test_defaults = {'caffemodel':None, 'snapshot_prefix':'snapshot', 'GPU_id':0, 'save':True, 'ignore_label':255, 'n_testinstances':None}
 	for cycle in range(ncycles):
 		for (cycle_size, params, tparams) in zip(cycle_sizes, run_params, test_params):
 			# add defaults to run_parameter dict
@@ -330,14 +336,14 @@ def cycle_runs_debug(run_params, test_params):
 			os.remove(file_)
 		os.remove(os.path.join(run_param['workdir'], 'train.log'))
 
-def load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = 'net.prototxt'):
+def load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = 'net.prototxt', phase = caffe.TEST):
 	"""
 	changes current directory to INPUT workdir and loads INPUT net_prototxt.
 	"""
 	os.chdir(workdir)
 	caffe.set_device(GPU_id)
 	caffe.set_mode_gpu()
-	net = caffe.Net(net_prototxt, caffemodel, caffe.TEST)
+	net = caffe.Net(net_prototxt, caffemodel, phase)
 	net.forward() #one forward to initialize the net
 	return net
 
