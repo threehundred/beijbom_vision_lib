@@ -628,16 +628,16 @@ def residual_bottleneck_unit(n, nout, s, newdepth = False):
     """
     
     bottom = n.__dict__['tops'].keys()[-1] #find the last layer in netspec
-    stride = 2 if newdepth else 1
+    stride = 2 if newdepth and nout > 64 else 1
 
     n[s + 'conv1'], n[s + 'bn1'], n[s + 'lrn1'] = conv_bn(n[bottom], ks = 1, stride = stride, nout = nout, pad = 0)
     n[s + 'relu1'] = L.ReLU(n[s + 'lrn1'], in_place=True)
     n[s + 'conv2'], n[s + 'bn2'], n[s + 'lrn2'] = conv_bn(n[s + 'relu1'], ks = 3, stride = 1, nout = nout, pad = 1)
     n[s + 'relu2'] = L.ReLU(n[s + 'lrn2'], in_place=True)
-    n[s + 'conv3'], n[s + 'bn3'], n[s + 'lrn3'] = conv_bn(n[s + 'relu2'], ks = 1, stride = stride, nout = nout * 4, pad = 0)
+    n[s + 'conv3'], n[s + 'bn3'], n[s + 'lrn3'] = conv_bn(n[s + 'relu2'], ks = 1, stride = 1, nout = nout * 4, pad = 0)
    
     if newdepth: 
-        n[s + 'conv_expand'], n[s + 'bn_expand'], n[s + 'lrn_expand'] = conv_bn(n[bottom], ks = 1, stride = 2, nout = nout * 4, pad = 0)
+        n[s + 'conv_expand'], n[s + 'bn_expand'], n[s + 'lrn_expand'] = conv_bn(n[bottom], ks = 1, stride = stride, nout = nout * 4, pad = 0)
         n[s + 'sum'] = L.Eltwise(n[s + 'lrn3'], n[s + 'lrn_expand'])
     else:
         n[s + 'sum'] = L.Eltwise(n[s + 'lrn3'], n[bottom])
