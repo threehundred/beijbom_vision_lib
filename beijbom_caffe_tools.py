@@ -526,55 +526,60 @@ def clean_workdirs(workdirs):
 
 
 
-def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False):
+def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False, learn = True):
     n = caffe.NetSpec()
     n.data, n.label = L.Python(module = 'beijbom_caffe_data_layers', layer = data_layer,
             ntop=ntop, param_str=str(pydata_params))
 
-    n.conv1_1, n.relu1_1 = conv_relu(n.data, 64)
-    n.conv1_2, n.relu1_2 = conv_relu(n.relu1_1, 64)
+    n.conv1_1, n.relu1_1 = conv_relu(n.data, 64, learn = learn)
+    n.conv1_2, n.relu1_2 = conv_relu(n.relu1_1, 64, learn = learn)
     n.pool1 = max_pool(n.relu1_2)
 
-    n.conv2_1, n.relu2_1 = conv_relu(n.pool1, 128)
-    n.conv2_2, n.relu2_2 = conv_relu(n.relu2_1, 128)
+    n.conv2_1, n.relu2_1 = conv_relu(n.pool1, 128, learn = learn)
+    n.conv2_2, n.relu2_2 = conv_relu(n.relu2_1, 128, learn = learn)
     n.pool2 = max_pool(n.relu2_2)
 
-    n.conv3_1, n.relu3_1 = conv_relu(n.pool2, 256)
-    n.conv3_2, n.relu3_2 = conv_relu(n.relu3_1, 256)
-    n.conv3_3, n.relu3_3 = conv_relu(n.relu3_2, 256)
+    n.conv3_1, n.relu3_1 = conv_relu(n.pool2, 256, learn = learn)
+    n.conv3_2, n.relu3_2 = conv_relu(n.relu3_1, 256, learn = learn)
+    n.conv3_3, n.relu3_3 = conv_relu(n.relu3_2, 256, learn = learn)
     n.pool3 = max_pool(n.relu3_3)
 
-    n.conv4_1, n.relu4_1 = conv_relu(n.pool3, 512)
-    n.conv4_2, n.relu4_2 = conv_relu(n.relu4_1, 512)
-    n.conv4_3, n.relu4_3 = conv_relu(n.relu4_2, 512)
+    n.conv4_1, n.relu4_1 = conv_relu(n.pool3, 512, learn = learn)
+    n.conv4_2, n.relu4_2 = conv_relu(n.relu4_1, 512, learn = learn)
+    n.conv4_3, n.relu4_3 = conv_relu(n.relu4_2, 512, learn = learn)
     n.pool4 = max_pool(n.relu4_3)
 
-    n.conv5_1, n.relu5_1 = conv_relu(n.pool4, 512)
-    n.conv5_2, n.relu5_2 = conv_relu(n.relu5_1, 512)
-    n.conv5_3, n.relu5_3 = conv_relu(n.relu5_2, 512)
+    n.conv5_1, n.relu5_1 = conv_relu(n.pool4, 512, learn = learn)
+    n.conv5_2, n.relu5_2 = conv_relu(n.relu5_1, 512, learn = learn)
+    n.conv5_3, n.relu5_3 = conv_relu(n.relu5_2, 512, learn = learn)
     n.pool5 = max_pool(n.relu5_3)
 
+    if learn:
+        param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)]
+    else:
+        param=[dict(lr_mult=0, decay_mult=1), dict(lr_mult=0, decay_mult=0)]
+
+
     n.fc6 = L.InnerProduct(n.pool5, num_output=4096,
-        param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)])
+        param = param)
 
     n.relu6 = L.ReLU(n.fc6, in_place=True)
     n.drop6 = L.Dropout(n.relu6, dropout_ratio=0.5, in_place=True)
 
     n.fc7 = L.InnerProduct(n.fc6, num_output=4096,
-        param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)])
+        param = param)
 
     n.relu7 = L.ReLU(n.fc7, in_place=True)
     n.drop7 = L.Dropout(n.relu7, dropout_ratio=0.5, in_place=True)
 
     n.score = L.InnerProduct(n.fc7, num_output=nclasses,
-        param=[dict(lr_mult=5, decay_mult=1), dict(lr_mult=10, decay_mult=0)])
+        param=[dict(lr_mult=5, decay_mult=1), dict(lr_mult=10, decay_mult=0)]) #always learn this layer. Else it's no fun!
 
     n.loss = L.SoftmaxWithLoss(n.score, n.label)
     
     if acclayer:
         n.accuracy = L.Accuracy(n.score, n.label)
     return n
-    #return n.to_proto()
 
 def conv_relu(bottom, nout, ks=3, stride=1, pad=1, learn=True):
     if learn:
