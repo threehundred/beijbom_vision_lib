@@ -192,6 +192,15 @@ def run(workdir = None, caffemodel = None, GPU_id = 0, solverfile = 'solver.prot
     os.system(runstring)
 
 
+def classify_imagedatalayer(net, bs = 50, nbr_iters = 1000, scorelayer = 'score', labellayer = 'label', GPU_id = 1):
+    scorelist = []
+    for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
+        scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
+        net.forward()
+    gtlist = gtlist[:n_testinstances]
+    scorelist = scorelist[:n_testinstances]
+    return scorelist
+
 
 def classify(workdir, scorelayer, caffemodel = None, GPU_id = 0, labellayer = 'label', snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = np.inf, n_testinstances = None, batch_size = None):
     """
