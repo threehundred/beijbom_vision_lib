@@ -132,7 +132,7 @@ class CaffeSolver:
 
 
 
-def run(workdir = None, caffemodel = None, GPU_id = 0, solverfile = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = CAFFEPATH, restart = False, nbr_iters = None):
+def run(workdir = None, caffemodel = None, gpuid = 1, solverfile = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = CAFFEPATH, restart = False, nbr_iters = None):
     """
     run is a simple caffe wrapper for training nets. It basically does two things. (1) ensures that training continues from the most recent model, and (2) makes sure the output is captured in a log file.
 
@@ -174,13 +174,13 @@ def run(workdir = None, caffemodel = None, GPU_id = 0, solverfile = 'solver.prot
     # by default, start from the most recent snapshot
     if snapshots and not(restart): 
         print "Running {} from iter {}.".format(workdir, np.max(_iter))
-        runstring  = 'cd {}; {} train -solver {} -snapshot {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, latest_snapshot, GPU_id, log)
+        runstring  = 'cd {}; {} train -solver {} -snapshot {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, latest_snapshot, gpuid, log)
 
     # else, start from a pre-trained net defined in caffemodel
     elif(caffemodel): 
         if(os.path.isfile(os.path.join(workdir, caffemodel))):
             print "Fine tuning {} from {}.".format(workdir, caffemodel)
-            runstring  = 'cd {}; {} train -solver {} -weights {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, caffemodel, GPU_id, log)
+            runstring  = 'cd {}; {} train -solver {} -weights {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, caffemodel, gpuid, log)
 
         else:
             raise IOError("Can't fine intial weight file: " + os.path.join(workdir, caffemodel))
@@ -188,176 +188,40 @@ def run(workdir = None, caffemodel = None, GPU_id = 0, solverfile = 'solver.prot
     # Train from scratch. Not recommended for larger nets.
     else: 
         print "No caffemodel specified. Running {} from scratch!!".format(workdir)
-        runstring  = 'cd {}; {} train -solver {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, GPU_id, log)
+        runstring  = 'cd {}; {} train -solver {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, gpuid, log)
     os.system(runstring)
 
 
-def classify_imagedatalayer(net, bs = 50, nbr_iters = 1000, scorelayer = 'score', labellayer = 'label', GPU_id = 1):
+def classify_imagedatalayer(net, n_testinstances = 50, batch_size = 50, scorelayer = 'score'):
     scorelist = []
     for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
         scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
         net.forward()
-    gtlist = gtlist[:n_testinstances]
     scorelist = scorelist[:n_testinstances]
     return scorelist
 
-
-def classify(workdir, scorelayer, caffemodel = None, GPU_id = 0, labellayer = 'label', snapshot_prefix = 'snapshot', net_prototxt = 'net.prototxt', save = False, ignore_label = np.inf, n_testinstances = None, batch_size = None):
-    """
-    classify runs a trained net on a testset defined in a net.prototxt file and returns the ground truth, estimated labels and the score vectors.
-
-    Takes
-    workdir: directory where net_prototxt lives. All paths must be given relative to this directory.
-    scorelayer: name of layer to extract the scores from
-    caffemodel: name of the stored caffemodel. If not given, the most recent snapshot in workdir will be used.
-    snapshot_prefix: snapshot prefix. Only used if caffemodel = None.
-    net_prorotxt: name of the net prototxt to use. 
-    save: wheather to save the output to disk.
-    ignore_label: Ignores all labels where the gt = ignore_label. Relevant only for FCN models. 
-    n_testinstances: Number of instances in the test list. If not given, this will be extracted automatically from the testlist or LMDB. 
-
-    Gives
-    (gt, est, scores): tuple with ground truth (as list), estimated labels (as list), scores as list of np arrays
-
-    """
-
-    os.chdir(workdir) #move to workdir
-    
-    # find latest model
-    if caffemodel is None: #
-        caffemodels = glob.glob("{}*.caffemodel".format(snapshot_prefix))
-        if caffemodels:
-            _iter = [int(f[f.index('iter_')+5:f.index('.')]) for f in caffemodels]
-            caffemodel = caffemodels[np.argmax(_iter)]
-        else:
-            raise IOError("Can't find a trained model in " + workdir + " using prefix: " + snapshot_prefix + ".")
-
-    # find batch size from prototxt
-    if batch_size is None:
-        with open (net_prototxt, "r") as myfile:
-            net_definition_str = myfile.read()
-        batch_size = int(re.findall('(?<=batch_size: )[0-9]*', net_definition_str)[-1]) #the batch size for the test set is assumed to be defined last. ======= TODO =======: make this more robust!
-
-    # find the number of instances in test set:
-    test_file = os.path.join('./../', re.findall("(?<=source: ../../)[a-z0-9]*.[a-z]*", net_definition_str)[-1])
-    if n_testinstances is None:
-        if test_file.find('lmdb') > -1:
-            in_db = lmdb.open(test_file)
-            n_testinstances = int(in_db.stat()['entries'])
-        elif test_file.find('txt') > -1: 
-            n_testinstances = nbr_lines(test_file)
-        else:
-            raise NotImplementedError("Only supports image_data_layers defined in XXXtxt files and LMDB inputs defined in XXXlmdb.")
-
-    print("Classifying " + test_file + " from "+ os.path.join(workdir, net_prototxt) + " using " + caffemodel + " with bs:" + str(batch_size) + ", and " + str(n_testinstances) + " total instances.")
-    sys.stdout.flush()
-
-    # Load model
-    net = load_model(workdir, caffemodel, GPU_id = GPU_id, net_prototxt = net_prototxt)
-
-    # Classify. All the reshaping has to do with being able to handling both FCN and classification nets.
-    gtlist = []
-    scorelist = []
-    for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
-        if net.blobs[labellayer].data.ndim == 1:
-            gtlist.extend(list(copy(net.blobs[labellayer].data).astype(np.uint8)))
-            scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
-        else:
-            gt = copy(net.blobs[labellayer].data.transpose(0, 2, 3, 1)).astype(np.uint8)
-            scores = copy(net.blobs[scorelayer].data.transpose(0, 2, 3, 1)).astype(np.float)
-            nclasses = scores.shape[3]
-            gt = np.repeat(gt, nclasses, axis = 3)
-            keepind = gt != ignore_label
-            scores = scores[keepind]
-            scorelist.extend(list(np.reshape(scores, [scores.shape[0]/nclasses, nclasses])))
-            gt = gt[keepind]
-            gtlist.extend(list(np.reshape(gt, [gt.shape[0]/nclasses, nclasses])[:, 0]))
-        net.forward()
-
-    # If the net is not a FCN we need to cut of the lists (since the last iteration may be looping around)
-    if net.blobs[labellayer].data.ndim == 1: 
-        gtlist = gtlist[:n_testinstances]
-        scorelist = scorelist[:n_testinstances]
-
-    # For convenience, include estimated labels
-    estlist = [np.argmax(s) for s in scorelist]
-    if (save):
-        pickle.dump((gtlist, estlist, scorelist), open(os.path.join(workdir, 'predictions_on_' + test_file[5:] + '_using_' + caffemodel +  '.p'), 'wb'))
-
-    return (gtlist, estlist, scorelist)
-
-
-
-def cycle_runs(run_params, test_params, cycle_sizes, ncycles, classify = True):
+def cycle_runs(workdir, cycle_size = 1000, ncycles = 10, gpuid = 1, batch_size_test = 50, n_testinstances = 50, testnet_prototxt = 'testnet.prototxt', snapshot_prefix = 'snapshot', scorelayer = 'score'):
     """
     cycle_runs is a wrapper around run and classify methods. It cycles through the various experiments, thus running them in "parrallell". After training net i for cycle_sizes[i] iterations, it will run through the TEST set of all *net.prototxt files in the directory and store these to disk. It will then move on to the next experiment, and cycle though all for ncycles.
 
-    Takes
-    run_params: is a list of dictionaries. 
-    Each dictionary is passed on directly to "run" method above. Each dictionary must contain values for at least the 
-    ['workdir'] parameter.
-
-    test_params: is a list of dictionaries. List must be same length as run_params.
-    Each directory is passed on to the "classify" method above. Each dictionary must contain values for the 
-    ['scorelayer'] parameter.
-
-    cycle_sizes: array of ints of the same length as run_params. 
-    Cycle_sizes determines the nbr iterations for each experiment in run_params list.
-    
-    ncycles: integer.
-    Total number of cycles to complete.
-
-
+    Takes:
+    stuff 
 
     """
-    run_defaults = {'solver':'solver.prototxt', 'GPU_id':0, 'log':'train.log','snapshot_prefix':'snapshot','caffepath':'/home/beijbom/cc/build/tools/caffe', 'restart': False}
-    test_defaults = {'caffemodel':None, 'snapshot_prefix':'snapshot', 'GPU_id':0, 'save':True, 'ignore_label':255, 'n_testinstances':None}
     for cycle in range(ncycles):
-        for (cycle_size, params, tparams) in zip(cycle_sizes, run_params, test_params):
-            # add defaults to run_parameter dict
-            for key in list(set(run_defaults) - set(params)):
-                params[key] = run_defaults[key]
-            params['nbr_iters'] = cycle_size
-            run(**params)        
-
-            if classify:
-                # classify all *net.prototxt in workdir
-                testnets = glob.glob(os.path.join(params['workdir'], '*net.prototxt'))
-                for testnet in testnets:
-                    # add params to tparams dict
-                    tparams['workdir'] = params['workdir'] #assuming the same workdir
-                    tparams['net_prototxt'] = testnet
-                    for key in list(set(test_defaults) - set(tparams)):
-                        tparams[key] = test_defaults[key]
-                    classify(**tparams)
+        run(workdir = workdir, nbr_iters = cycle_size, gpuid = gpuid)
+        caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
+        net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = testnet_prototxt, phase = caffe.TEST)
+        scorelist = classify_imagedatalayer(net, n_testinstances = n_testinstances, batch_size = batch_size_test, scorelayer = scorelayer)
+        pickle.dump((scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
 
 
-
-def cycle_runs_debug(run_params, test_params, classify=True):
-    """
-    This is to debug the cycle_runs parameters and setup, before pressing play.
-    """
-    run_params = deepcopy(run_params)
-    test_params = deepcopy(test_params)
-    print('Running tests...')
-    for test_param in test_params:
-        test_param['n_testinstances'] = 5
-    cycle_sizes = np.ones(len(test_params), dtype = np.int) * 4 #4 iterations
-    cycle_runs(run_params, test_params, cycle_sizes, 1, classify)
-    print('Run test OK. Cleaning up.')
-    for run_param in run_params:
-        for file_ in glob.glob(os.path.join(run_param['workdir'], 'snapshot*')):
-            os.remove(file_)
-        for file_ in glob.glob(os.path.join(run_param['workdir'], 'predictions_on*')):
-            os.remove(file_)
-        os.remove(os.path.join(run_param['workdir'], 'train.log'))
-
-def load_model(workdir, caffemodel, GPU_id = 0, net_prototxt = 'net.prototxt', phase = caffe.TEST):
+def load_model(workdir, caffemodel, gpuid = 0, net_prototxt = 'net.prototxt', phase = caffe.TEST):
     """
     changes current directory to INPUT workdir and loads INPUT net_prototxt.
     """
     os.chdir(workdir)
-    caffe.set_device(GPU_id)
+    caffe.set_device(gpuid)
     caffe.set_mode_gpu()
     net = caffe.Net(net_prototxt, caffemodel, phase)
     net.forward() #one forward to initialize the net
@@ -372,9 +236,6 @@ def nbr_lines(fname):
         for i, l in enumerate(f):
             pass
     return i + 1
-
-
-
 
 
 def sac(im, net, transformer, scorelayer, target_size = [1024, 1024], padcolor = [126, 148, 137], startlayer = 'conv1_1'):
@@ -447,11 +308,11 @@ def classify_imlist(im_list, net, transformer, batch_size, scorelayer, startlaye
     return(estlist, scorelist)
 
 
-def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', GPU_id = 0, snapshot_prefix = 'snapshot', save = False):
+def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False):
 
     # Preliminaries    
     caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
-    net = load_model(workdir, caffemodel, GPU_id = GPU_id, net_prototxt = net_prototxt)
+    net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = net_prototxt)
     transformer = Transformer(pyparams['im_mean'])
     estlist, scorelist, gtlist = [], [], []
     
