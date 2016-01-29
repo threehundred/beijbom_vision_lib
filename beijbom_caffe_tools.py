@@ -308,15 +308,16 @@ def classify_imlist(im_list, net, transformer, batch_size, scorelayer, startlaye
     return(estlist, scorelist)
 
 
-def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False):
+def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False, caffemodel = None):
 
     # Preliminaries    
-    caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
+    if not caffemodel:
+        caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
     net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = net_prototxt)
     transformer = Transformer(pyparams['im_mean'])
     estlist, scorelist, gtlist = [], [], []
     
-    print "classifying {} images in {} using {}".format(len(imlist), workdir, caffemodel)
+    print "Classifying {} images in {} using {}".format(len(imlist), workdir, caffemodel)
     for imname in tqdm(imlist):
         
         patchlist = []
