@@ -278,7 +278,7 @@ def sac(im, net, transformer, scorelayer, target_size = [1024, 1024], padcolor =
     est = np.argmax(scores, axis = 2) # For convenience, get the predictions.
     return (est, scores)
 
-def classify_imlist(im_list, net, transformer, batch_size, scorelayer, startlayer = 'conv1_1'):
+def classify_imlist(im_list, net, transformer, batch_size, scorelayer = 'score', startlayer = 'conv1_1'):
     """
     classify_imlist classifies a list of images and returns estimated labels and scores. Only support classification nets (not FCNs).
 
@@ -308,16 +308,10 @@ def classify_imlist(im_list, net, transformer, batch_size, scorelayer, startlaye
     return(estlist, scorelist)
 
 
-def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False, caffemodel = None):
+def classify_from_patchlist(imlist, imdict, pyparams, net, scorelayer = 'score', startlayer = 'conv1_1'):
 
-    # Preliminaries    
-    if not caffemodel:
-        caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
-    net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = net_prototxt)
-    transformer = Transformer(pyparams['im_mean'])
     estlist, scorelist, gtlist = [], [], []
-    
-    print "Classifying {} images in {} using {}".format(len(imlist), workdir, caffemodel)
+    transformer = Transformer(pyparams['im_mean'])
     for imname in tqdm(imlist):
         
         patchlist = []
@@ -327,7 +321,7 @@ def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'sco
         im = np.asarray(Image.open(imname))
         (im, scale) = coral_image_resize(im, pyparams['scaling_method'], pyparams['scaling_factor'], height_cm) #resize.
 
-        # Pad the boundaries                        
+        # Pad the boundaries
         im = np.pad(im, ((pyparams['crop_size']*2, pyparams['crop_size']*2),(pyparams['crop_size']*2, pyparams['crop_size']*2), (0, 0)), mode='reflect')        
         
         # Extract patches
@@ -342,9 +336,22 @@ def classify_from_patchlist(imlist, imdict, pyparams, workdir, scorelayer = 'sco
         estlist.extend(this_estlist)
         scorelist.extend(this_scorelist)
         
+    return (gtlist, estlist, scorelist)
+
+
+def classify_from_patchlist_wrapper(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False, caffemodel = None):
+
+    # Preliminaries    
+    if not caffemodel:
+        caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
+    net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = net_prototxt)
+    
+    print "Classifying {} images in {} using {}".format(len(imlist), workdir, caffemodel)
+    (gtlist, estlist, scorelist) = classify_from_patchlist(imlist, imdict, pyparams, net, scorelayer = scorelayer, startlayer = startlayer)
+       
     if (save):
         pickle.dump((gtlist, estlist, scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
-    return [gtlist, estlist, scorelist]
+    return (gtlist, estlist, scorelist)
 
 
 def find_latest_caffemodel(workdir, snapshot_prefix = 'snapshot'):
