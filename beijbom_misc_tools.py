@@ -197,3 +197,19 @@ def acc(gt, est):
     if not len(gt) == len(est):
         raise ValueError('input gt and est must have the same length')
     return float(sum([(g == e) for (g,e) in zip(gt, est)])) / len(gt)
+
+
+def liblin_cleanscores(liblin_scores, liblin_labellist, nclasses):
+    """
+    This arcane class restructures the scores output of liblinear.predict. It makes it so that each score is ordered naturally, and that each score vector is of length nclasses.
+    
+    """
+    lowscore = np.min(liblin_scores) - 1
+    scores = []
+    for lls in liblin_scores:
+        s = np.ones(nclasses) * lowscore
+        s[liblin_labellist] = lls
+        scores.append(s)
+    return scores
+        
+            
