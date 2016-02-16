@@ -10,8 +10,8 @@ import cPickle as pickle
 from tqdm import tqdm
 from settings import CAFFEPATH
 from caffe import layers as L, params as P
-from beijbom_misc_tools import coral_image_resize, crop_and_rotate
-
+from beijbom_misc_tools import coral_image_resize, crop_and_rotate, pload, psave
+import json
 """
 beijbom_caffe_tools (bct) contains classes and wrappers for caffe.
 """
@@ -312,7 +312,7 @@ def classify_from_patchlist(imlist, imdict, pyparams, net, scorelayer = 'score',
 
     estlist, scorelist, gtlist = [], [], []
     transformer = Transformer(pyparams['im_mean'])
-    for imname in tqdm(imlist):
+    for imname in imlist:
         
         patchlist = []
         (point_anns, height_cm) = imdict[os.path.basename(imname)]
@@ -353,6 +353,18 @@ def classify_from_patchlist_wrapper(imlist, imdict, pyparams, workdir, scorelaye
         pickle.dump((gtlist, estlist, scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
     return (gtlist, estlist, scorelist)
 
+def patchlist_cycle_runs(workdir, gpuid, ncycles, nbr_iters, imdictpath = '../imdict.json', testlistpath = '../testlist.txt', scorelayer = 'score'):
+    """
+    This is a custom wrapper for the patchlist_wrapper that relies heavily on a certain file structure.
+    """
+    imlist = [line.strip() for line in open(os.path.join(workdir, testlistpath))] 
+    pyparams = pload(os.path.join(workdir, 'pyparams.pkl'))
+    with open(os.path.join(workdir, imdictpath)) as s:
+        imdict = json.load(s)
+    for cycle in range(ncycles):
+        run(workdir, gpuid = gpuid, nbr_iters = nbr_iters)
+        classify_from_patchlist_wrapper(imlist, imdict, pyparams, workdir, scorelayer = scorelayer, gpuid = gpuid, save = True)
+    
 
 def find_latest_caffemodel(workdir, snapshot_prefix = 'snapshot'):
     
@@ -404,7 +416,7 @@ def clean_workdirs(workdirs):
 
 
 
-def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False, learn = True):
+def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False, learn = True, scorelayer_name = 'score'):
     n = caffe.NetSpec()
     n.data, n.label = L.Python(module = 'beijbom_caffe_data_layers', layer = data_layer,
             ntop=ntop, param_str=str(pydata_params))
@@ -450,13 +462,13 @@ def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False, learn =
     n.relu7 = L.ReLU(n.fc7, in_place=True)
     n.drop7 = L.Dropout(n.relu7, dropout_ratio=0.5, in_place=True)
 
-    n.score = L.InnerProduct(n.fc7, num_output=nclasses,
+    n[scorelayer_name] = L.InnerProduct(n.fc7, num_output=nclasses,
         param=[dict(lr_mult=5, decay_mult=1), dict(lr_mult=10, decay_mult=0)]) #always learn this layer. Else it's no fun!
 
-    n.loss = L.SoftmaxWithLoss(n.score, n.label)
+    n.loss = L.SoftmaxWithLoss(n[scorelayer_name], n.label)
     
     if acclayer:
-        n.accuracy = L.Accuracy(n.score, n.label)
+        n.accuracy = L.Accuracy(n[scorelayer_name], n.label)
     return n
 
 def conv_relu(bottom, nout, ks=3, stride=1, pad=1, learn=True):
