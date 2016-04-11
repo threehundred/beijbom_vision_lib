@@ -170,19 +170,6 @@ class TransformerWrapper(Transformer):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ==============================================================================
 # ==============================================================================
 # =========================== IMAGENET LAYER ===================================
@@ -308,28 +295,6 @@ class TransformerWrapper(Transformer):
         Transformer.__init__(self, mean)
     def __call__(self, im):
         return self.preprocess(im)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

@@ -179,6 +179,14 @@ class ConfMatrix:
       cm = cm / totals[:, np.newaxis]
       return(np.diag(cm))
 
+   def get_class_f1(self):
+      recalls = self.get_class_recalls()
+      precisions = self.get_class_precisions()
+      f1s_denominator = precisions + recalls
+      f1s_denominator[f1s_denominator == 0] = 1
+      f1s = 2 * np.multiply(recalls, precisions) / f1s_denominator
+      return f1s
+
    def export(self, normalize='recall'):
 
       cm = self.cm
