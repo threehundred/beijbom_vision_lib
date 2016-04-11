@@ -12,6 +12,7 @@ from settings import CAFFEPATH
 from caffe import layers as L, params as P
 from beijbom_misc_tools import coral_image_resize, crop_and_rotate, pload, psave
 import json
+import gc
 """
 beijbom_caffe_tools (bct) contains classes and wrappers for caffe.
 """
@@ -156,7 +157,7 @@ def run(workdir = None, caffemodel = None, gpuid = 1, solverfile = 'solver.proto
     # finds the latest snapshots
     snapshots = glob.glob(os.path.join(workdir, "{}*.solverstate".format(snapshot_prefix)))
     if snapshots:
-        _iter = [int(f[f.index('iter_')+5:f.index('.')]) for f in snapshots]
+        _iter = [int(f[f.index('iter_')+5:f.index('.solverstate')]) for f in snapshots]
         max_iter = np.max(_iter)
         latest_snapshot = os.path.basename(snapshots[np.argmax(_iter)])
     else:
@@ -214,6 +215,7 @@ def cycle_runs(workdir, cycle_size = 1000, ncycles = 10, gpuid = 1, batch_size_t
         net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = testnet_prototxt, phase = caffe.TEST)
         scorelist = classify_imagedatalayer(net, n_testinstances = n_testinstances, batch_size = batch_size_test, scorelayer = scorelayer)
         pickle.dump((scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
+        del net
 
 
 def load_model(workdir, caffemodel, gpuid = 0, net_prototxt = 'net.prototxt', phase = caffe.TEST):
@@ -266,8 +268,9 @@ def sac(im, net, transformer, scorelayer, target_size = [1024, 1024], padcolor =
             net.blobs['data'].data[...] = transformer.preprocess(imlist[imcounter])
             net.forward(start = startlayer)
             scores_slice = np.float32(np.squeeze(net.blobs[scorelayer].data.transpose(2, 3, 1, 0)))
+            gc.collect()
             if col == 0:
-                scores_row = deepcopy(scores_slice)
+                scores_row = copy(scores_slice)
             else:
                 scores_row = np.concatenate((scores_row, scores_slice), axis = 1) # Build one row (along the columns)
         if row == 0:
@@ -370,7 +373,7 @@ def find_latest_caffemodel(workdir, snapshot_prefix = 'snapshot'):
     
     caffemodels = glob.glob("{}*.caffemodel".format(os.path.join(workdir, snapshot_prefix)))
     if caffemodels:
-        _iter = [int(f[f.index('iter_')+5:f.index('.')]) for f in caffemodels]
+        _iter = [int(f[f.index('iter_')+5:f.index('.caffemodel')]) for f in caffemodels]
         return os.path.basename(caffemodels[np.argmax(_iter)])
     else:
         print "Can't find a trained model in " + workdir + " using prefix: " + snapshot_prefix + "."
@@ -414,6 +417,62 @@ def clean_workdirs(workdirs):
             if os.path.isfile(file_):
                 os.remove(file_)
 
+
+def vgg_core(n, nclasses, learn = True, scorelayer_name = 'score', acclayer = False, softmax = False, scorelayer = True):
+    # first input 'n', must have layer member: n.data
+
+    n.conv1_1, n.relu1_1 = conv_relu(n.data, 64, learn = learn)
+    n.conv1_2, n.relu1_2 = conv_relu(n.relu1_1, 64, learn = learn)
+    n.pool1 = max_pool(n.relu1_2)
+
+    n.conv2_1, n.relu2_1 = conv_relu(n.pool1, 128, learn = learn)
+    n.conv2_2, n.relu2_2 = conv_relu(n.relu2_1, 128, learn = learn)
+    n.pool2 = max_pool(n.relu2_2)
+
+    n.conv3_1, n.relu3_1 = conv_relu(n.pool2, 256, learn = learn)
+    n.conv3_2, n.relu3_2 = conv_relu(n.relu3_1, 256, learn = learn)
+    n.conv3_3, n.relu3_3 = conv_relu(n.relu3_2, 256, learn = learn)
+    n.pool3 = max_pool(n.relu3_3)
+
+    n.conv4_1, n.relu4_1 = conv_relu(n.pool3, 512, learn = learn)
+    n.conv4_2, n.relu4_2 = conv_relu(n.relu4_1, 512, learn = learn)
+    n.conv4_3, n.relu4_3 = conv_relu(n.relu4_2, 512, learn = learn)
+    n.pool4 = max_pool(n.relu4_3)
+
+    n.conv5_1, n.relu5_1 = conv_relu(n.pool4, 512, learn = learn)
+    n.conv5_2, n.relu5_2 = conv_relu(n.relu5_1, 512, learn = learn)
+    n.conv5_3, n.relu5_3 = conv_relu(n.relu5_2, 512, learn = learn)
+    n.pool5 = max_pool(n.relu5_3)
+
+    if learn:
+        param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)]
+    else:
+        param=[dict(lr_mult=0, decay_mult=1), dict(lr_mult=0, decay_mult=0)]
+
+
+    n.fc6 = L.InnerProduct(n.pool5, num_output=4096,
+        param = param)
+
+    n.relu6 = L.ReLU(n.fc6, in_place=True)
+    n.drop6 = L.Dropout(n.relu6, dropout_ratio=0.5, in_place=True)
+
+    n.fc7 = L.InnerProduct(n.fc6, num_output=4096,
+        param = param)
+
+    n.relu7 = L.ReLU(n.fc7, in_place=True)
+    n.drop7 = L.Dropout(n.relu7, dropout_ratio=0.5, in_place=True)
+
+    if scorelayer:
+        n[scorelayer_name] = L.InnerProduct(n.fc7, num_output=nclasses,
+            param=[dict(lr_mult=5, decay_mult=1), dict(lr_mult=10, decay_mult=0)]) #always learn this layer. Else it's no fun!
+
+    if softmax:
+        n.loss = L.SoftmaxWithLoss(n[scorelayer_name], n.label)
+
+    if acclayer:
+        n.accuracy = L.Accuracy(n[scorelayer_name], n.label)
+
+    return n
 
 
 def vgg(pydata_params, data_layer, nclasses, ntop = 2, acclayer = False, learn = True, scorelayer_name = 'score'):

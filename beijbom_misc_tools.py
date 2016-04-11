@@ -31,9 +31,9 @@ def coral_image_resize(im, scaling_method, scaling_factor, height_cm):
     """
 
     if scaling_method == 'scale':
-       scale = scaling_factor # here scaling_factor is the desired image scaling.
+       scale = float(scaling_factor) # here scaling_factor is the desired image scaling.
     elif scaling_method == 'ratio':
-        scale = scaling_factor * height_cm / im.shape[0] # here scaling_factor is the desited px_cm_ratio.
+        scale = float(scaling_factor) * height_cm / im.shape[0] # here scaling_factor is the desited px_cm_ratio.
     im = scipy.misc.imresize(im, scale)
     return (im, scale)
 
@@ -106,7 +106,7 @@ def vis_square(data, padsize=1, padval=0, scale = 1):
     
     plt.imshow(data)
 
-def int_to_rgb(im, bg_color = 0, ignore = 255):
+def int_to_rgb(im, bg_color = 0, ignore = 255, nclasses = None):
     """
     Converts integer valued np image array to an rgb color image.
 
@@ -116,13 +116,16 @@ def int_to_rgb(im, bg_color = 0, ignore = 255):
     Gives
     (w x h x 3) uint8, nparray image
     """
-    gt_vals = np.setdiff1d(np.unique(im), ignore)
-    RGB_tuples = get_good_colors(np.max(gt_vals) + 1)
-
+    gt_vals = list(set(np.unique(im)) - set([ignore]))
+    gt_vals = [int(g) for g in gt_vals]
     
+    if nclasses is None:
+        nclasses = np.max(gt_vals) + 1
+    RGB_tuples = get_good_colors(nclasses)
+
     w, h = im.shape
     ret = np.ones((w, h, 3), dtype=np.uint8) * bg_color
-
+   
     for label in gt_vals:
         ret[im == label] = RGB_tuples[label, :]
         
@@ -130,9 +133,13 @@ def int_to_rgb(im, bg_color = 0, ignore = 255):
 
 
 def softmax(w):
+    w = np.asarray(w)
     e = np.exp(w)
-    row_sums = e.sum(axis=1)
-    return e / row_sums[:, np.newaxis]
+    if len(w.shape) == 1:
+        return e / np.sum(e)
+    else:
+        row_sums = e.sum(axis=1)
+        return e / row_sums[:, np.newaxis]
      
 
 def get_good_colors(N):
@@ -213,3 +220,15 @@ def liblin_cleanscores(liblin_scores, liblin_labellist, nclasses):
     return scores
         
             
+
+def make_coral_gt(imsize, annotations, blobsize = 5, ignore=255):
+        """
+        gt: H x W array of class values that make a label image
+        """
+        gt = np.ones(imsize, dtype=np.uint8) * ignore
+        for (r, c, label) in annotations:
+            for r_offset in range(-blobsize, 1 + blobsize, 1):
+                for c_offset in range(-blobsize, 1 + blobsize, 1):
+                    if r+r_offset < gt.shape[0] and r+r_offset > -1 and c+c_offset < gt.shape[1] and c+c_offset > -1:
+                        gt[r+r_offset, c+c_offset] = label
+        return gt
