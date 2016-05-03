@@ -1,18 +1,27 @@
-import glob, os, math, colorsys, scipy, caffe, re, sys
-from PIL import Image
+import glob
+import os
+import math
+import colorsys
+import scipy
+import caffe
+import re
+import sys
+import json
+import gc
+
 import numpy as np
 import matplotlib.pyplot as plt
 import beijbom_misc_tools as bmt
 import beijbom_confmatrix as confmatrix
-from pylab import *
+
+from PIL import Image
 from copy import deepcopy, copy
-import cPickle as pickle
+from pylab import *
 from tqdm import tqdm
 from settings import CAFFEPATH
 from caffe import layers as L, params as P
 from beijbom_misc_tools import coral_image_resize, crop_and_rotate, pload, psave
-import json
-import gc
+
 """
 beijbom_caffe_tools (bct) contains classes and wrappers for caffe.
 """
@@ -61,7 +70,6 @@ class Transformer:
         im = im[:, :, ::-1] #change to RGB
         
         return np.uint8(im)
-
 
 
 class CaffeSolver:
@@ -194,6 +202,9 @@ def run(workdir = None, caffemodel = None, gpuid = 1, solverfile = 'solver.proto
 
 
 def classify_imagedatalayer(net, n_testinstances = 50, batch_size = 50, scorelayer = 'score'):
+    """
+    Runs the test-phase of a caffe net with imagedatalayer. It runs through INPUT n_testinstances test instances in batches of INPUT batch_size.
+    """
     scorelist = []
     for test_itt in tqdm(range(n_testinstances//batch_size + 1)):
         scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
@@ -203,18 +214,14 @@ def classify_imagedatalayer(net, n_testinstances = 50, batch_size = 50, scorelay
 
 def cycle_runs(workdir, cycle_size = 1000, ncycles = 10, gpuid = 1, batch_size_test = 50, n_testinstances = 50, testnet_prototxt = 'testnet.prototxt', snapshot_prefix = 'snapshot', scorelayer = 'score'):
     """
-    cycle_runs is a wrapper around run and classify methods. It cycles through the various experiments, thus running them in "parrallell". After training net i for cycle_sizes[i] iterations, it will run through the TEST set of all *net.prototxt files in the directory and store these to disk. It will then move on to the next experiment, and cycle though all for ncycles.
-
-    Takes:
-    stuff 
-
+    cycle_runs is a wrapper around run and classify_imagedatalayer. After training the net for cycle_sizes iterations, it will run through the TEST net and store the results to disk.
     """
     for cycle in range(ncycles):
         run(workdir = workdir, nbr_iters = cycle_size, gpuid = gpuid)
         caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
         net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = testnet_prototxt, phase = caffe.TEST)
         scorelist = classify_imagedatalayer(net, n_testinstances = n_testinstances, batch_size = batch_size_test, scorelayer = scorelayer)
-        pickle.dump((scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
+        psave(scorelist, osp.join(workdir, 'predictions_using_' + caffemodel +  '.p'))
         del net
 
 
@@ -229,57 +236,6 @@ def load_model(workdir, caffemodel, gpuid = 0, net_prototxt = 'net.prototxt', ph
     net.forward() #one forward to initialize the net
     return net
 
-
-def nbr_lines(fname):
-    """
-    Opens INPUT file fname and returns the number of lines in the file.
-    """
-    with open(fname) as f:
-        for i, l in enumerate(f):
-            pass
-    return i + 1
-
-
-def sac(im, net, transformer, scorelayer, target_size = [1024, 1024], padcolor = [126, 148, 137], startlayer = 'conv1_1'):
-    """
-    sac (slice and classify) slices the input image, feed each piece to the
-    caffe net object, and then stitch the output back together to an output image
-
-    Takes
-    im: input numpy array.
-    net: Caffe net object.
-    transformer: transformer object as defined above.
-    scorelayer: string defining the name of the score layer.
-    target_size: size of each slice.
-    padcolor: the RGB values used when padding the image.
-    startlayer: string defining the name of first convolutional layer.
-
-    Gives
-    (est, scores) tuple, where est is an integer image of the same size as the input, and scores is a multi-layer image encoding the score of each class in each layer.
-
-    """
-
-    input_size = im.shape[:2]
-    (imlist, ncells) = bmt.slice_image(im, target_size = target_size, padcolor = padcolor)
-    imcounter = -1
-    for row in range(ncells[0]):
-        for col in range(ncells[1]):
-            imcounter += 1
-            net.blobs['data'].data[...] = transformer.preprocess(imlist[imcounter])
-            net.forward(start = startlayer)
-            scores_slice = np.float32(np.squeeze(net.blobs[scorelayer].data.transpose(2, 3, 1, 0)))
-            gc.collect()
-            if col == 0:
-                scores_row = copy(scores_slice)
-            else:
-                scores_row = np.concatenate((scores_row, scores_slice), axis = 1) # Build one row (along the columns)
-        if row == 0:
-            scores = scores_row
-        else:
-            scores = np.concatenate((scores, scores_row), axis = 0) # Concatenate the rows
-    scores = scores[:input_size[0], :input_size[1], :] # Crop away the padding.
-    est = np.argmax(scores, axis = 2) # For convenience, get the predictions.
-    return (est, scores)
 
 def classify_imlist(im_list, net, transformer, batch_size, scorelayer = 'score', startlayer = 'conv1_1'):
     """
@@ -296,78 +252,18 @@ def classify_imlist(im_list, net, transformer, batch_size, scorelayer = 'score',
 
     nbatches = int(math.ceil(float(len(im_list)) / batch_size))
     scorelist = []
-    pos = -1
     for b in range(nbatches):
         for i in range(batch_size):
-            pos += 1
-            if pos < len(im_list):
+            if b * batch_size + i < len(im_list):
                 net.blobs['data'].data[i, :, :, :] = transformer.preprocess(im_list[pos])
         net.forward(start = startlayer)
         scorelist.extend(list(copy(net.blobs[scorelayer].data).astype(np.float)))
-        
+
     scorelist = scorelist[:len(im_list)]
     estlist = [np.argmax(s) for s in scorelist]  
     
     return(estlist, scorelist)
 
-
-def classify_from_patchlist(imlist, imdict, pyparams, net, scorelayer = 'score', startlayer = 'conv1_1'):
-
-    estlist, scorelist, gtlist = [], [], []
-    transformer = Transformer(pyparams['im_mean'])
-    for imname in imlist:
-        
-        patchlist = []
-        (point_anns, height_cm) = imdict[os.path.basename(imname)]
-
-        # Load image
-        im = np.asarray(Image.open(imname))
-        (im, scale) = coral_image_resize(im, pyparams['scaling_method'], pyparams['scaling_factor'], height_cm) #resize.
-
-        # Pad the boundaries
-        im = np.pad(im, ((pyparams['crop_size']*2, pyparams['crop_size']*2),(pyparams['crop_size']*2, pyparams['crop_size']*2), (0, 0)), mode='reflect')        
-        
-        # Extract patches
-        for (row, col, label) in point_anns:
-            center_org = np.asarray([row, col])
-            center = np.round(pyparams['crop_size']*2 + center_org * scale).astype(np.int)
-            patchlist.append(crop_and_rotate(im, center, pyparams['crop_size'], 0, tile = False))
-            gtlist.append(label)
-
-        # Classify and append
-        [this_estlist, this_scorelist] = classify_imlist(patchlist, net, transformer, pyparams['batch_size'], scorelayer = scorelayer, startlayer = startlayer)
-        estlist.extend(this_estlist)
-        scorelist.extend(this_scorelist)
-        
-    return (gtlist, estlist, scorelist)
-
-
-def classify_from_patchlist_wrapper(imlist, imdict, pyparams, workdir, scorelayer = 'score', startlayer = 'conv1_1', net_prototxt = 'testnet.prototxt', gpuid = 0, snapshot_prefix = 'snapshot', save = False, caffemodel = None):
-
-    # Preliminaries    
-    if not caffemodel:
-        caffemodel = find_latest_caffemodel(workdir, snapshot_prefix = snapshot_prefix)
-    net = load_model(workdir, caffemodel, gpuid = gpuid, net_prototxt = net_prototxt)
-    
-    print "Classifying {} images in {} using {}".format(len(imlist), workdir, caffemodel)
-    (gtlist, estlist, scorelist) = classify_from_patchlist(imlist, imdict, pyparams, net, scorelayer = scorelayer, startlayer = startlayer)
-       
-    if (save):
-        pickle.dump((gtlist, estlist, scorelist), open(os.path.join(workdir, 'predictions_using_' + caffemodel +  '.p'), 'wb'))
-    return (gtlist, estlist, scorelist)
-
-def patchlist_cycle_runs(workdir, gpuid, ncycles, nbr_iters, imdictpath = '../imdict.json', testlistpath = '../testlist.txt', scorelayer = 'score'):
-    """
-    This is a custom wrapper for the patchlist_wrapper that relies heavily on a certain file structure.
-    """
-    imlist = [line.strip() for line in open(os.path.join(workdir, testlistpath))] 
-    pyparams = pload(os.path.join(workdir, 'pyparams.pkl'))
-    with open(os.path.join(workdir, imdictpath)) as s:
-        imdict = json.load(s)
-    for cycle in range(ncycles):
-        run(workdir, gpuid = gpuid, nbr_iters = nbr_iters)
-        classify_from_patchlist_wrapper(imlist, imdict, pyparams, workdir, scorelayer = scorelayer, gpuid = gpuid, save = True)
-    
 
 def find_latest_caffemodel(workdir, snapshot_prefix = 'snapshot'):
     
