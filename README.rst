@@ -1,0 +1,1 @@
+beijbom vision lib is a simply python package with some computer vision tools. In particular it contains some handy wrappers for caffe.berkeleyvision.org.
