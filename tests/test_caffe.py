@@ -19,16 +19,20 @@ from beijbom_vision_lib.caffe.nets.vgg import vgg_core
 class TestCaffeTools(unittest.TestCase):
 
     workdir = 'workdir'
+    basedir = ''
 
     def setUp(self):
+        self.basedir = os.getcwd()
+        os.chdir(self.basedir)
         os.makedirs(self.workdir)
 
     def tearDown(self):
+        os.chdir(self.basedir)
         shutil.rmtree(self.workdir)
 
     def test_transformer(self):
 
-        img = np.uint8(Image.open('./static/bbc.jpg'))
+        img = np.uint8(Image.open('static/bbc.jpg'))
 
         t = bct.Transformer()
 
@@ -87,11 +91,10 @@ class TestCaffeTools(unittest.TestCase):
         if osp.isfile(caffefile):
             shutil.copyfile(caffefile, osp.join(self.workdir, 'initial.caffemodel'))       
 
-
         bct.run(self.workdir, nbr_iters = 3)
 
-        self.assertEqual(osp.isfile(osp.join(self.workdir, 'train.log')), True)
-        self.assertEqual(osp.isfile(osp.join(self.workdir, 'snapshot_iter_3.caffemodel')), True)
+        self.assertTrue(osp.isfile(osp.join(self.workdir, 'train.log')))
+        self.assertTrue(osp.isfile(osp.join(self.workdir, 'snapshot_iter_3.caffemodel')))
 
         caffemodel, iter_ = bct.find_latest_caffemodel(self.workdir)
 
@@ -99,12 +102,11 @@ class TestCaffeTools(unittest.TestCase):
         net = bct.load_model(self.workdir, caffemodel, gpuid = 0, net_prototxt = 'testnet.prototxt', phase = caffe.TEST)
         estlist, scorelist = bct.classify_from_datalayer(net, n_testinstances = 3, batch_size = 50, scorelayer = 'score')
 
-        os.chdir('../')
         self.assertEqual(len(scorelist), 3)
         self.assertEqual(len(estlist), 3)
         self.assertEqual(len(scorelist[0]), 2)
 
-        img = np.asarray(Image.open('static/bbc.jpg'))[:224, :224, :]
+        img = np.asarray(Image.open('../static/bbc.jpg'))[:224, :224, :]
         imglist = []
         for itt in range(6):
             imglist.append(img)
@@ -117,5 +119,7 @@ class TestCaffeTools(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    if osp.isdir('workdir'):
+        shutil.rmtree('workdir')
     suite = unittest.TestLoader().loadTestsFromTestCase(TestCaffeTools)
     unittest.TextTestRunner(verbosity=2).run(suite)
