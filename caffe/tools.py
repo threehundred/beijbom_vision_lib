@@ -135,7 +135,7 @@ class CaffeSolver:
 
 
 
-def run(workdir = None, caffemodel = None, gpuid = 1, solverfile = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = 'caffe', restart = False, nbr_iters = None):
+def run(workdir = None, caffemodel = None, gpuid = 0, solverfile = 'solver.prototxt', log = 'train.log', snapshot_prefix = 'snapshot', caffepath = 'caffe', restart = False, nbr_iters = None):
     """
     run is a simple caffe wrapper for training nets. It basically does two things. (1) ensures that training continues from the most recent model, and (2) makes sure the output is captured in a log file.
 
@@ -203,7 +203,7 @@ def classify_from_datalayer(net, n_testinstances = 50, batch_size = 50, scorelay
     
     return estlist, scorelist
 
-def cycle_runs(workdir, cycle_size = 1000, ncycles = 10, gpuid = 1, batch_size_test = 50, n_testinstances = 50, testnet_prototxt = 'testnet.prototxt', snapshot_prefix = 'snapshot', scorelayer = 'score'):
+def cycle_runs(workdir, cycle_size = 1000, ncycles = 10, gpuid = 0, batch_size_test = 50, n_testinstances = 50, testnet_prototxt = 'testnet.prototxt', snapshot_prefix = 'snapshot', scorelayer = 'score'):
     """
     cycle_runs is a wrapper around run and classify_from_datalayer. After training the net for cycle_sizes iterations, it will run through the TEST net and store the results to disk.
     """
