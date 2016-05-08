@@ -169,7 +169,7 @@ def run(workdir = None, caffemodel = None, gpuid = 0, solverfile = 'solver.proto
 
     # by default, start from the most recent snapshot
     if latest_snapshot and not restart: 
-        print "Running {} from iter {}.".format(workdir, np.max(_iter))
+        print "Running {} from iter {}.".format(workdir, max_iter)
         runstring  = 'cd {}; {} train -solver {} -snapshot {} -gpu {} 2>&1 | tee -a {}'.format(workdir, caffepath, solverfile, latest_snapshot, gpuid, log)
 
     # else, start from a pre-trained net defined in caffemodel
