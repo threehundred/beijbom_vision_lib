@@ -38,19 +38,49 @@ class TestCaffeTools(unittest.TestCase):
 
         self.assertEqual(np.all(img == t.deprocess(t.preprocess(img))), True)
 
-    def test_solver(self):
+    def test_solver_copy(self):
         
-        solver = bct.CaffeSolver(debug = True)
+        solver = bct.CaffeSolver()
         
         solver.write(osp.join(self.workdir, 'solver.prototxt'))
+        solver2 = bct.CaffeSolver(empty = True)
+        solver2.add_from_file(osp.join(self.workdir, 'solver.prototxt'))
 
-        solver_copy = copy.copy(solver)
-
-        solver.add_from_file(osp.join(self.workdir, 'solver.prototxt'))
-
-        for k1, k2 in zip(sorted(solver.sp.keys()), sorted(solver_copy.sp.keys())):
+        for k1, k2 in zip(sorted(solver.sp.keys()), sorted(solver2.sp.keys())):
             self.assertEqual(k1, k2)
-            self.assertEqual(solver.sp[k1], solver.sp[k2])
+            self.assertEqual(solver.sp[k1], solver2.sp[k2])
+
+        # try again with the onlytrain mode
+        solver = bct.CaffeSolver(onlytrain = True)
+        
+        solver.write(osp.join(self.workdir, 'solver.prototxt'))
+        solver2 = bct.CaffeSolver(empty = True)
+        solver2.add_from_file(osp.join(self.workdir, 'solver.prototxt'))
+
+        for k1, k2 in zip(sorted(solver.sp.keys()), sorted(solver2.sp.keys())):
+            self.assertEqual(k1, k2)
+            self.assertEqual(solver.sp[k1], solver2.sp[k2])
+
+    def test_solver_empty(self):
+
+        solver = bct.CaffeSolver(empty = True)
+
+        self.assertEqual(len(solver.sp.keys()), 0)
+
+    def test_solver_onlytrain(self):
+
+        solver = bct.CaffeSolver(onlytrain = True)
+        for k in solver.sp.keys():
+            self.assertEqual(k.find('test'), -1)
+
+    def test_solver_debug(self):
+
+        solver = bct.CaffeSolver(debug = True)
+        self.assertEqual(solver.sp['test_iter'], '1')
+
+        solver = bct.CaffeSolver(debug = True, onlytrain = True)
+        self.assertFalse('test_iter' in solver.sp.keys())
+        
 
     def test_find_latest_caffemodel(self):
 
@@ -67,7 +97,7 @@ class TestCaffeTools(unittest.TestCase):
     def test_find_latest_caffemodel_edge(self):
         self.assertEqual(bct.find_latest_caffemodel(self.workdir)[0], None)
         self.assertEqual(bct.find_latest_caffemodel(self.workdir)[1], 0)
-        
+     
     def test_workdir_setup(self):
 
         solver = bct.CaffeSolver(debug = True)

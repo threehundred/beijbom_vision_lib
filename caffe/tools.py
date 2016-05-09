@@ -72,9 +72,13 @@ class CaffeSolver:
     Note that all parameters are stored as strings. For technical reasons, the strings are stored as strings within strings.
     """
 
-    def __init__(self, testnet_prototxt_path = "testnet.prototxt", trainnet_prototxt_path = "trainnet.prototxt", debug = False):
-        
+    def __init__(self, testnet_prototxt_path = "testnet.prototxt", trainnet_prototxt_path = "trainnet.prototxt", debug = False, empty = False, onlytrain = False):
+       
         self.sp = {}
+
+        # return empty solver.
+        if empty:
+            return
 
         # critical:
         self.sp['base_lr'] = '0.001'
@@ -83,7 +87,7 @@ class CaffeSolver:
         # speed:
         self.sp['test_iter'] = '100'
         self.sp['test_interval'] = '250'
-        
+
         # looks:
         self.sp['display'] = '25'
         self.sp['snapshot'] = '2500'
@@ -99,16 +103,22 @@ class CaffeSolver:
         self.sp['test_net'] = '"' + testnet_prototxt_path + '"'
 
         # pretty much never change these.
-        self.sp['max_iter'] = '100000'
+        self.sp['max_iter'] = '1000000'
         self.sp['test_initialization'] = 'false'
         self.sp['average_loss'] = '25' # this has to do with the display.
         self.sp['iter_size'] = '1' #this is for accumulating gradients
 
-        if (debug):
+        if debug:
             self.sp['max_iter'] = '12'
+            self.sp['display'] = '1'
+            
             self.sp['test_iter'] = '1'
             self.sp['test_interval'] = '4'
-            self.sp['display'] = '1'
+
+        if onlytrain:
+            for f in ['test_net', 'test_iter', 'test_interval', 'test_initialization']:
+                del self.sp[f]
+            
 
     def add_from_file(self, filepath):
         """
@@ -161,7 +171,7 @@ def run(workdir = None, caffemodel = None, gpuid = 0, solverfile = 'solver.proto
 
     # update solver with new max_iter parameter (if asked for)
     if not nbr_iters is None: 
-        solver = CaffeSolver()
+        solver = CaffeSolver(empty = True)
         solver.add_from_file(os.path.join(workdir, solverfile))
         solver.sp['max_iter'] = str(max_iter + nbr_iters)
         solver.sp['snapshot'] = str(1000000) #disable this, don't need it.
