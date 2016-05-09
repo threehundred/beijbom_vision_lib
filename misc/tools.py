@@ -132,12 +132,13 @@ def acc(gt, est):
 
     if not len(gt) == len(est):
         raise ValueError('Input gt and est must have the same length')
+    
     for g in gt:
-        if not type(g) is int:
+        if not isinstance(g, int):
             raise TypeError('Input gt must be an array of ints')
 
     for e in est:
-        if not type(e) is int:
+        if not isinstance(e, int):
             raise TypeError('Input est must be an array of ints')
 
     return float(sum([(g == e) for (g,e) in zip(gt, est)])) / len(gt)
