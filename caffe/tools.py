@@ -288,6 +288,42 @@ def calculate_image_mean(imlist):
     return mean
 
 
+def pyparams_from_net(filepath):
+    """
+    read the python datalayer parameters from a net.prototxt
+    """
+    netobject = parse_net_prototxt(filepath)
+    return eval(netobject.layer[0].python_param.param_str)
+
+
+def parse_net_prototxt(filepath):
+    """
+    helper function to parse a net prototoxt
+    """
+    netobject = caffe.proto.caffe_pb2.NetParameter()
+    with open(filepath, "r") as file:
+        text_format.Merge(str(file.read()), netobject)
+    return netobject
+
+
+def find_best_iter(workdir, testtoken = 'predictions_using_snapshot_iter_*.caffemodel.p', accfcn = bmt.acc):
+    
+    iterlist = []
+    bestacc = -1
+    for testname in glob.glob(osp.join(workdir, testtoken)):
+        
+        [gtlist, estlist, scorelist] = pload(osp.join(workdir, testname))
+        acc = accfcn(estlist, gtlist)
+        iter_ = int(re.search('iter_([0-9]*).caffemodel.p', testname).group(1))
+
+        iterlist.append((iter_, acc))
+        if acc > bestacc:
+            bestiter = iter_
+            bestacc = acc
+
+    return bestiter, iterlist
+
+
 def clean_workdirs(workdirs):
     for workdir in workdirs:
         for file_ in glob.glob(os.path.join(workdir, 'snapshot*')):
