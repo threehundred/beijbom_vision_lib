@@ -12,9 +12,9 @@ import numpy as np
 
 from PIL import Image
 from caffe import layers as L, params as P
+from google.protobuf import text_format
 
 import beijbom_vision_lib.misc.tools as bmt
-
 
 """
 This module contains classes and wrappers for caffe.
@@ -322,7 +322,7 @@ def find_best_iter(workdir, testtoken = 'predictions_using_snapshot_iter_*.caffe
     bestacc = -1
     for testname in glob.glob(osp.join(workdir, testtoken)):
         
-        [gtlist, estlist, scorelist] = pload(osp.join(workdir, testname))
+        [gtlist, estlist, scorelist] = bmt.pload(osp.join(workdir, testname))
         acc = accfcn(estlist, gtlist)
         iter_ = int(re.search('iter_([0-9]*).caffemodel.p', testname).group(1))
 
